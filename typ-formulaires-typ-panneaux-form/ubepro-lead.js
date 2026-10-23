@@ -634,7 +634,13 @@
     const candidates = [...form.querySelectorAll('input, select, textarea')]
       .filter((field) => !field.disabled && field.willValidate !== false);
     const active = candidates.filter((field) => isActiveField(field));
-    const pool = active.length ? active : candidates;
+
+    // Aucun champ affiché = étape de confirmation, ou moteur exécuté hors
+    // navigateur (tests). Dans le premier cas il ne faut surtout rien bloquer ;
+    // dans le second on retombe sur tous les champs pour rester testable.
+    const layoutAvailable = !!(document.body
+      && (document.body.offsetWidth || document.body.offsetHeight || document.body.getClientRects().length));
+    const pool = active.length ? active : (layoutAvailable ? [] : candidates);
     return pool.find((field) => typeof field.checkValidity === 'function' && !field.checkValidity()) || null;
   };
 
