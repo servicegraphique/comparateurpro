@@ -2,6 +2,8 @@
 <html lang="fr">
 <head>
   <meta charset="utf-8">
+  <!-- _local:csp -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:; connect-src 'self'; frame-src 'self'; form-action 'self'; base-uri 'self'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <!-- Consentement Google : refus par défaut, puis mise à jour depuis les préférences enregistrées. -->
   <script>
@@ -37,20 +39,13 @@
       }
     })(window);
   </script>
-  <!-- Google Tag Manager -->
-  <script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
-  new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
-  j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
-  'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
-  })(window,document,'script','dataLayer','GTM-53SH7D7F');</script>
-  <!-- End Google Tag Manager -->
   <title>Assurances pro pour esthéticiennes, esthéticiens, coiffeurs et instituts de beauté | Comparateurpro</title>
-  <link rel="canonical" href="https://assurance-estheticiennes-institut-beaute.lp.comparateurpro.fr/">
+  <link rel="canonical" href="/assurance-estheticiennes-institut-beaute/">
   <meta property="og:title" content="Assurances pro pour esthéticiennes, esthéticiens, coiffeurs et instituts de beauté | Comparateurpro">
   <meta property="og:type" content="website">
   <meta property="og:locale" content="fr_FR">
   <meta property="og:description" content="">
-  <meta property="og:image" content="https://assurance-estheticiennes-institut-beaute.lp.comparateurpro.fr/img/equipe-institut.jpg">
+  <meta property="og:image" content="/img/equipe-institut.jpg">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="description" content="Assurances professionnelles pour esthéticiennes et esthéticiens, salons de coiffure et instituts de beauté : comparez les offres RC Pro et multirisque professionnelle, et découvrez santé, prévoyance et retraite, individuelle ou collective. Gratuit et sans engagement.">
   <meta name="robots" content="noindex, nofollow">
@@ -62,8 +57,6 @@
 </head>
 <body>
 <!-- Google Tag Manager (noscript) -->
-<noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-53SH7D7F"
-height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
 <!-- End Google Tag Manager (noscript) -->
 
 <!-- EN-TÊTE -->
@@ -99,7 +92,7 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
       </div>
 
       <div class="card form-card" id="comparateur">
-        <form id="leadForm" class="multistep" data-api-endpoint="https://mc.hellolead.pro/mon_compte/api/webflow/get_information.php" data-form-id="ADW_LP_ASSURANCE_CONSULTANT" data-sms-endpoint="https://mc.hellolead.pro/mon_compte/api/smspartner/envoi_code_verification.php" data-google-script-url="https://script.google.com/macros/s/AKfycbwrbyCb9-cAmIRPGNvnb-aM-CkhQAerrkfP3_HSw-ewmThxsn4vbZt5daaq2aOnL01a1w/exec" data-api-mode="nocors" data-source="LP ESTHETIQUE" data-scroll-top="true" data-scroll-top-offset="90" novalidate>
+        <form id="leadForm" class="multistep" data-api-endpoint="/_local/api/lead" data-form-id="ADW_LP_ASSURANCE_CONSULTANT" data-sms-endpoint="/_local/api/otp" data-google-script-url="/_local/api/mock" data-api-mode="nocors" data-source="LP ESTHETIQUE" data-scroll-top="true" data-scroll-top-offset="90" novalidate>
           <div class="progress" aria-hidden="true"><div class="progress-bar" id="bar"></div></div>
           <p class="step-count" id="stepCount" aria-live="polite">Étape 1 sur 7</p>
 
@@ -506,5 +499,7 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
 
 
 <script src="script.js" defer></script>
+  <!-- _local:runtime -->
+  <script src="/_local/runtime.js"></script>
 </body>
 </html>
