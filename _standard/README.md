@@ -150,7 +150,40 @@ en session (`ubepro_tracking_v1`) sont purgées.
 N'importe quel élément portant `id="open-cookie-preferences-btn"`,
 `data-cookie-manage` ou la classe `.btn-cookie-link` rouvre la modale.
 
-## 7. Tests
+## 7. Robustesse du bouton « Valider »
+
+Le moteur doit fonctionner **même quand la page se défend**. Quatre défenses
+cumulatives :
+
+| Défense | Ce qu'elle neutralise |
+|---|---|
+| Écoute `submit` + `click` enregistrée **dès l'exécution du script**, avant les scripts de la page | jQuery / Webflow / Formly qui s'intercalent devant nous |
+| `preventDefault` + `stopImmediatePropagation` **avant toute validation** | handlers maison silencieux (`$('.form-ass').submit(e => e.preventDefault())`) |
+| `form.noValidate = true` sur les formulaires de lead | le navigateur qui refuse le clic (« An invalid form control is not focusable ») à cause d'un `required` invisible |
+| Filet de clic : si aucun `submit` ne suit le clic sous 350 ms, le moteur soumet lui-même | pages qui bloquent le clic, ou navigateur qui n'émet aucun événement |
+
+Tous les accès `document.cookie` / `sessionStorage` sont encadrés : un
+environnement qui les bloque (iframe sandbox, cookies tiers) ne désactive plus
+le moteur.
+
+### Diagnostic intégré
+
+En local (`__UBEPRO_LOCAL__`) ou avec `debug: true`, le moteur renvoie chaque
+étape à `/_local/api/log` : `moteur-pret`, `submit-intercepte`,
+`validation-refusee`, `envoi-termine`, `clic-sans-soumission`. Les traces sont
+donc visibles dans le terminal du serveur, sans ouvrir la console.
+
+```js
+// dans la console du navigateur
+ubeproLead.version     // version chargée
+ubeproLead.diagnose()  // état de chaque formulaire : lead ? noValidate ? champs visibles ? bloquants ?
+```
+
+Les balises injectées portent une empreinte de version
+(`ubepro-lead.js?v=b55c600a`) et le serveur local envoie `Cache-Control:
+no-store` : aucun navigateur ne peut rejouer une version périmée.
+
+## 8. Tests
 
 - **Audit dépendances** : `python3 _local/tools/audit.py` → 0 URL externe
   fonctionnelle hors GTM (autorisé).

@@ -107,6 +107,21 @@ GTM_NOSCRIPT = """<noscript><iframe src="https://www.googletagmanager.com/ns.htm
 
 FORM_ID_BASE = "ADW_LP_"
 
+# Empreinte des fichiers du socle : ajoutée en query string sur les balises
+# injectées, pour qu'un navigateur ne puisse jamais servir une version périmée.
+def asset_version():
+    import hashlib
+    digest = hashlib.md5()
+    for name in ("ubepro-lead.js", "ubepro-consent.js", "ubepro-ui.css"):
+        path = os.path.join(SRC, name)
+        if os.path.isfile(path):
+            with open(path, "rb") as fh:
+                digest.update(fh.read())
+    return digest.hexdigest()[:8]
+
+
+ASSET_V = asset_version()
+
 
 # --------------------------------------------------------------------------- #
 # Découverte des sites
@@ -261,7 +276,7 @@ def head_block(meta, cfg, html):
         GTM_SNIPPET,
         f'<meta http-equiv="Content-Security-Policy" content="{CSP}">',
         jsonld(meta, cfg, html),
-        '<link rel="stylesheet" href="ubepro-ui.css">',
+        '<link rel="stylesheet" href="ubepro-ui.css?v=%s">' % ASSET_V,
         HEAD_END,
     ])
 
@@ -280,8 +295,8 @@ def body_block(cfg):
         BODY_MARK,
         f"<script>window.UBEPRO_STANDARD = {json.dumps(config, ensure_ascii=False)};</script>",
         GTM_NOSCRIPT,
-        '<script src="ubepro-consent.js" defer></script>',
-        '<script src="ubepro-lead.js" defer></script>',
+        '<script src="ubepro-consent.js?v=%s" defer></script>' % ASSET_V,
+        '<script src="ubepro-lead.js?v=%s" defer></script>' % ASSET_V,
         BODY_END,
     ])
 
@@ -305,8 +320,8 @@ def strip_previous(html):
 
     # Blocs d'une version antérieure, sans marqueur de fin : on s'arrête sur la
     # dernière balise injectée, jamais sur `</head>`.
-    html = re.sub(re.escape(HEAD_MARK) + r".*?<link rel=\"stylesheet\" href=\"ubepro-ui\.css\">", "", html, flags=re.S)
-    html = re.sub(re.escape(BODY_MARK) + r".*?<script src=\"ubepro-lead\.js\" defer></script>", "", html, flags=re.S)
+    html = re.sub(re.escape(HEAD_MARK) + r".*?<link rel=\"stylesheet\" href=\"ubepro-ui\.css(\?[^\"]*)?\">", "", html, flags=re.S)
+    html = re.sub(re.escape(BODY_MARK) + r".*?<script src=\"ubepro-lead\.js(\?[^\"]*)?\" defer></script>", "", html, flags=re.S)
 
     # Résidus éventuels (marqueur seul, orphelin)
     for marker in (HEAD_MARK, HEAD_END, BODY_MARK, BODY_END):
