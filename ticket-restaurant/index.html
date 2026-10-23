@@ -5,9 +5,12 @@
   <!-- ubepro:head -->
   <script>
     // Détection du mode local : aucun script tiers n'est chargé hors production.
+    // Hôtes de test : localhost, sous-domaines .local, sandbox de prévisualisation
+    // (e2b.app, arena.site) et tout hôte non-production explicitement marqué.
     window.__UBEPRO_LOCAL__ = /^(localhost|127\.0\.0\.1|0\.0\.0\.0|::1|\[::1\])$/i.test(location.hostname)
-      || /\.localhost$/i.test(location.hostname)
-      || /\.e2b\.app$/i.test(location.hostname);
+      || /\.(localhost|local|test|e2b\.app|arena\.site)$/i.test(location.hostname)
+      || /^sbx-/i.test(location.hostname)
+      || /[?&]ubepro_local=1\b/.test(location.search);
   </script>
   <script>
     window.dataLayer = window.dataLayer || [];

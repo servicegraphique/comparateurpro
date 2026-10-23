@@ -106,8 +106,19 @@ aux blocs GTM posés par le standard.
 
 - intercepte la soumission **au niveau `document`** (capture), donc fonctionne
   aussi avec les formulaires multi-étapes Webflow ;
-- ne prend la main que si le formulaire est **valide** et **contient des
-  données exploitables** ; sinon la page garde la main (aucune régression) ;
+- **prend la main immédiatement** (`preventDefault` + `stopImmediatePropagation`)
+  dès qu'il s'agit d'un formulaire de lead, et *avant* toute vérification de
+  validité. Certaines pages embarquent un handler maison très silencieux
+  (`.form-ass` → `preventDefault()` seul) : s'il s'exécute, le clic sur
+  « Valider » ne produit plus rien du tout ;
+- ne valide que les champs **des étapes réellement affichées** : les
+  formulaires multi-étapes (Formly/Webflow) laissent dans le DOM des champs
+  `required` appartenant à des étapes masquées ou à des branches
+  conditionnelles jamais parcourues. Les compter rendait le formulaire
+  définitivement invalide et bloquait le bouton « Valider » sans message ;
+- affiche un message explicite dans le bloc d'échec de la page
+  (`.w-form-fail`, qui est un **frère** du `<form>` et non un descendant) ;
+- ignore les formulaires de recherche (`[role="search"]`, `action*=recherche`) ;
 - **ignore** les formulaires portant `data-api-endpoint` (intégration dédiée,
   ex. `assurance-estheticiennes-institut-beaute` qui gère son propre parcours
   OTP + double envoi) ;
