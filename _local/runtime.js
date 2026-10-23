@@ -50,6 +50,33 @@
     return "local";
   }
 
+  /* ------------------------------------------------------------------ mode test réel
+     ?ubepro_prod=1  → les endpoints de LEAD ne sont plus redirigés vers le mock :
+     le navigateur envoie réellement au CRM Hellolead et à Google Apps Script.
+     Tout le reste (GTM, pubs, traceurs) reste neutralisé.
+     Le drapeau est mémorisé en sessionStorage car le paramètre disparaît au
+     premier changement de page. */
+  var PROD_MODE = (function () {
+    try {
+      var m = /[?&]ubepro_prod=([^&]*)/.exec(location.search);
+      if (m) {
+        if (m[1] === "0") { sessionStorage.removeItem("ubepro_prod"); return false; }
+        sessionStorage.setItem("ubepro_prod", "1");
+        return true;
+      }
+      return sessionStorage.getItem("ubepro_prod") === "1";
+    } catch (e) { return false; }
+  })();
+
+  function isLeadEndpoint(url) {
+    var u;
+    try { u = new URL(url); } catch (e) { return false; }
+    return /hellolead\.pro$/i.test(u.hostname)
+      || (u.hostname === "script.google.com")
+      || (/(^|\.)webflow\.com$/i.test(u.hostname) && /\/api\/v1\/form\//i.test(u.pathname))
+      || /formdata\.webflow\.com$/i.test(u.hostname);
+  }
+
   var SLUG = detectSlug();
   var API_OK = false;          // passe à true si le serveur local répond
   var leads = [];
@@ -57,6 +84,7 @@
   window.__LOCAL__ = {
     slug: SLUG,
     dir: LOCAL_DIR,
+    prodMode: PROD_MODE,
     otpCode: OTP_CODE,
     get leads() { return leads; },
     available: function () { return API_OK; }
@@ -90,6 +118,8 @@
 
   function toLocal(url) {
     if (!url || !isExternal(url)) return null;
+    // Mode test réel : les envois de lead partent vers la production.
+    if (PROD_MODE && isLeadEndpoint(url)) return null;
     var u;
     try { u = new URL(url); } catch (e) { return null; }
 
@@ -418,7 +448,8 @@
       return nativePush.apply(window.dataLayer, arguments);
     };
 
-    log("runtime actif — site " + SLUG + " — OTP local " + OTP_CODE);
+    log("runtime actif — site " + SLUG + " — OTP local " + OTP_CODE
+        + (PROD_MODE ? " — ⚠ MODE TEST RÉEL : les leads partent vers la PRODUCTION" : ""));
   }
 
   /* Démarrage : après script.js (defer) et après le ready de Webflow/Formly. */

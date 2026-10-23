@@ -104,6 +104,33 @@ En local, le runtime redirige les deux endpoints de production vers
 `/_local/api/lead` et `/_local/api/sheet` : le parcours complet (validation,
 double envoi, événement GTM) est testable hors ligne.
 
+### Mode « test réel » : envoyer de vrais leads au CRM
+
+Par défaut, le runtime redirige les envois vers le mock local. Pour un test
+bout en bout **réel** (CRM Hellolead + Google Sheet de production), ajouter le
+paramètre :
+
+```
+http://localhost:8080/<slug>/?ubepro_prod=1
+```
+
+Le drapeau est mémorisé en `sessionStorage` (le paramètre disparaît au premier
+changement de page). Pour revenir au mock : `?ubepro_prod=0`.
+
+Ce que le mode change — et **uniquement** cela :
+
+| | Mode normal | `?ubepro_prod=1` |
+|---|---|---|
+| CRM `mc.hellolead.pro` | mock `/_local/api/lead` | **production, écriture réelle** |
+| Google Apps Script | mock `/_local/api/sheet` | **production, écriture réelle** |
+| GTM / pubs / traceurs | neutralisés | neutralisés (inchangé) |
+| OTP | simulé (`123456`) | inchangé |
+
+⚠️ Un lead envoyé en mode réel **pollue le CRM de production**. Utiliser des
+coordonnées de test identifiables (`Test`, prénom `Arena`, `test.arena@example.com`).
+Le runtime l'annonce dans la console :
+`runtime actif — … — ⚠ MODE TEST RÉEL : les leads partent vers la PRODUCTION`.
+
 ### CSP locale sur chaque page
 
 ```html
