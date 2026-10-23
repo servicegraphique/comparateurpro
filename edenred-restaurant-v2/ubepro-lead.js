@@ -63,6 +63,11 @@
 
   // Formulaires gérés par une intégration dédiée : on ne touche pas.
   const SKIP_SELECTOR = '[data-api-endpoint]';
+  // Formulaires non-lead (recherche interne) : jamais interceptés.
+  const IGNORE_SELECTOR = '[role="search"], [data-search], form[action*="recherche"], form[action*="search"]';
+  // Un formulaire de lead contient au minimum une coordonnée.
+  const LEAD_FIELD_SELECTOR = 'input[type="email"], input[type="tel"], '
+    + 'input[name*="mail" i], input[name*="telephone" i], input[name*="phone" i]';
 
   const MARKETING_KEYS = new Set(['gclid', 'msclkid', 'fbclid']);
   const TRACKING_KEYS = [
@@ -357,10 +362,16 @@
 
   const isVisible = (el) => !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
 
-  const findErrorSlot = (form) =>
-    form.querySelector('.form-error')
-    || form.querySelector('.w-form-fail')
-    || form.querySelector('[role="alert"]');
+  // Le bloc d'échec Webflow (`.w-form-fail`) est un FRÈRE du <form>, dans
+  // `.w-form` : il faut donc chercher aussi dans le conteneur, sinon aucun
+  // message n'est jamais affiché et le clic reste sans explication.
+  const findErrorSlot = (form) => {
+    const wrapper = form.closest('.w-form') || form.parentElement;
+    return form.querySelector('.form-error')
+      || (wrapper && wrapper.querySelector('.w-form-fail'))
+      || form.querySelector('[role="alert"]')
+      || (wrapper && wrapper.querySelector('[role="alert"]'));
+  };
 
   const showError = (form, message) => {
     const slot = findErrorSlot(form);
@@ -575,6 +586,15 @@
       markInvalid(form, emailField, 'Veuillez renseigner une adresse email valide.');
       return false;
     }
+
+    // Reste-t-il un champ requis vide sur une étape réellement affichée ?
+    // (les champs des étapes masquées ou des branches non parcourues sont ignorés)
+    const blocking = firstBlockingField(form);
+    if (blocking) {
+      markInvalid(form, blocking, 'Merci de compléter ce champ avant de valider.');
+      return false;
+    }
+
     return true;
   };
 
@@ -583,6 +603,40 @@
   /* ------------------------------------------------------------------ */
 
   const submitting = new WeakMap();
+
+  /** Vrai si le formulaire collecte au moins une coordonnée (lead). */
+  const isLeadForm = (form) => !!form.querySelector(LEAD_FIELD_SELECTOR);
+
+  /**
+   * Vrai si le champ appartient à une étape réellement affichée.
+   * Les formulaires multi-étapes (Formly/Webflow) laissent dans le DOM des
+   * champs `required` appartenant à des étapes masquées ou à des branches
+   * conditionnelles jamais parcourues : ils ne doivent jamais bloquer l'envoi.
+   */
+  const isActiveField = (field) => {
+    if (!field || field.disabled) return false;
+    if (field.type === 'hidden') return false;
+    let node = field;
+    while (node && node.nodeType === 1) {
+      if (node.hasAttribute('hidden')) return false;
+      if (node.getAttribute && /display\s*:\s*none/i.test(node.getAttribute('style') || '')) return false;
+      node = node.parentElement;
+    }
+    try {
+      const style = window.getComputedStyle(field);
+      if (style && (style.display === 'none' || style.visibility === 'hidden')) return false;
+    } catch (_) { /* getComputedStyle indisponible */ }
+    return !!(field.offsetWidth || field.offsetHeight || field.getClientRects().length);
+  };
+
+  /** Premier champ requis invalide, en ignorant les étapes masquées. */
+  const firstBlockingField = (form) => {
+    const candidates = [...form.querySelectorAll('input, select, textarea')]
+      .filter((field) => !field.disabled && field.willValidate !== false);
+    const active = candidates.filter((field) => isActiveField(field));
+    const pool = active.length ? active : candidates;
+    return pool.find((field) => typeof field.checkValidity === 'function' && !field.checkValidity()) || null;
+  };
 
   /** Vrai si le formulaire contient au moins une valeur soumise exploitable. */
   const hasUsableData = (form) => {
@@ -601,24 +655,20 @@
     const form = event.target;
     if (!(form instanceof HTMLFormElement)) return;
     if (form.matches(SKIP_SELECTOR)) return;               // intégration dédiée
-    if (submitting.get(form)) {
-      event.preventDefault();
-      event.stopImmediatePropagation?.();
-      return;
-    }
+    if (form.matches(IGNORE_SELECTOR)) return;             // recherche / non-lead
+    if (!isLeadForm(form) && !hasUsableData(form)) return; // formulaire vide non-lead
 
-    // Formulaire incomplet (étape en cours) : on laisse la page gérer
-    // (navigation multi-étapes, validation native du navigateur).
-    if (typeof form.checkValidity === 'function' && !form.checkValidity()) return;
-
-    // Aucune donnée exploitable (markup exotique, formulaire dupliqué vide…) :
-    // on n'intercepte rien, la page garde la main. Aucune régression possible.
-    if (!hasUsableData(form)) return;
-
-    // À partir d'ici le moteur prend la main : aucun autre handler ne doit
-    // déclencher un second envoi (Webflow, Formly, scripts de page…).
+    // IMPORTANT — on prend la main AVANT toute vérification de validité.
+    // Certaines pages embarquent un handler maison très silencieux
+    // (ex. `$('.form-ass').submit(e => e.preventDefault())`) : s'il s'exécute,
+    // le clic sur « Valider » ne produit plus rien du tout. En bloquant la
+    // propagation immédiatement, aucun autre handler ne peut avaler l'envoi.
     event.preventDefault();
     event.stopImmediatePropagation?.();
+    event.stopPropagation?.();
+
+    if (submitting.get(form)) return;                      // double clic
+
     clearError(form);
 
     if (!validateForm(form)) return;
