@@ -28,6 +28,20 @@
   window.__UBEPRO_LEAD_ACTIVE__ = true;
 
   /* ------------------------------------------------------------------ */
+  /* Interception (enregistrée IMMÉDIATEMENT, avant tout autre script)    */
+  /* ------------------------------------------------------------------ */
+  // Les handlers réels sont définis plus bas : ces relais garantissent que
+  // l'écoute est en place avant les scripts de la page (jQuery, Webflow,
+  // Formly…) et qu'aucun d'eux ne peut s'intercaler devant nous.
+  let submitHandler = null;
+  let clickHandler = null;
+
+  try {
+    document.addEventListener('submit', (event) => { if (submitHandler) submitHandler(event); }, true);
+    document.addEventListener('click', (event) => { if (clickHandler) clickHandler(event); }, true);
+  } catch (_) { /* environnement sans DOM complet */ }
+
+  /* ------------------------------------------------------------------ */
   /* Configuration                                                       */
   /* ------------------------------------------------------------------ */
 
@@ -98,7 +112,11 @@
   const getCookiePreferences = () => {
     if (window.__UBEPRO_COOKIE_PREFERENCES__) return window.__UBEPRO_COOKIE_PREFERENCES__;
     const prefix = 'user_cookie_preferences=';
-    for (const part of document.cookie.split(';')) {
+    // `document.cookie` peut lever une exception (iframe sandbox, cookies
+    // tiers bloqués). Ce n'est jamais une raison de désactiver le moteur.
+    let cookies = '';
+    try { cookies = document.cookie || ''; } catch (_) { return null; }
+    for (const part of cookies.split(';')) {
       const item = part.trim();
       if (item.startsWith(prefix)) {
         try {
@@ -127,6 +145,35 @@
   const normalizePayloadValue = (value) => safeText(value, 500).replace(/[<>]/g, '');
 
   const debugLog = (...args) => { if (DEBUG) console.debug('[ubepro]', ...args); };
+
+  /**
+   * Diagnostic best-effort : en local (ou si CONFIG.debug), chaque événement
+   * clé du moteur est renvoyé au serveur de test (`/_local/api/log`), ce qui
+   * permet de savoir depuis le terminal ce qui s'est réellement passé dans le
+   * navigateur — sans dépendre de la console.
+   */
+  const report = (step, details = {}) => {
+    try {
+      const local = window.__UBEPRO_LOCAL__ === true;
+      if (!local && !DEBUG) return;
+      const payload = JSON.stringify(Object.assign({
+        kind: 'ubepro-lead',
+        step,
+        ts: new Date().toISOString(),
+        url: window.location.href,
+        userAgent: typeof navigator !== 'undefined' ? navigator.userAgent.slice(0, 120) : ''
+      }, details));
+      const endpoint = '/_local/api/log';
+      if (local && typeof navigator.sendBeacon === 'function'
+          && navigator.sendBeacon(endpoint, new Blob([payload], { type: 'text/plain;charset=UTF-8' }))) {
+        return;
+      }
+      if (local && typeof fetch === 'function') {
+        fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=UTF-8' }, body: payload, keepalive: true })
+          .catch(() => {});
+      }
+    } catch (_) { /* diagnostic jamais bloquant */ }
+  };
 
   const generateId = () => {
     try {
@@ -176,7 +223,7 @@
     }
   };
 
-  let trackingMemory = readStoredParams();
+  let trackingMemory = (() => { try { return readStoredParams(); } catch (_) { return {}; } })();
   let trackingPageUrl = (() => {
     if (analyticsGranted()) {
       try {
@@ -224,7 +271,7 @@
     return out;
   };
 
-  captureTrackingParams();
+  try { captureTrackingParams(); } catch (_) { /* tracking jamais bloquant */ }
 
   window.addEventListener('ubepro:cookie-preferences', () => {
     if (!trackingGranted()) {
@@ -672,12 +719,22 @@
     event.preventDefault();
     event.stopImmediatePropagation?.();
     event.stopPropagation?.();
+    clickGuard.delete(form);                               // un vrai submit a eu lieu
 
     if (submitting.get(form)) return;                      // double clic
 
+    report('submit-intercepte', {
+      form: form.id || form.getAttribute('name') || '(sans id)',
+      origine: event.__fromClickGuard ? 'filet-clic' : 'evenement-submit',
+      champs: form.querySelectorAll('input, select, textarea').length
+    });
+
     clearError(form);
 
-    if (!validateForm(form)) return;
+    if (!validateForm(form)) {
+      report('validation-refusee', { form: form.id || '(sans id)' });
+      return;
+    }
 
     const honeypot = form.querySelector('input[name="website"]');
     if (honeypot && honeypot.value.trim() !== '') {
@@ -724,6 +781,11 @@
 
       const [sheetRes, crmRes] = results;
       window.ubeproLead.lastResults = { sheet: sheetRes, crm: crmRes };
+      report('envoi-termine', {
+        form: form.id || '(sans id)',
+        sheet: sheetRes.status === 'fulfilled' ? (sheetRes.value && sheetRes.value.state) : 'rejected',
+        crm: crmRes.status === 'fulfilled' ? (crmRes.value && crmRes.value.state) : 'rejected'
+      });
       debugLog('Résultats :', { sheet: sheetRes, crm: crmRes });
 
       if (sheetRes.status === 'rejected') {
@@ -759,6 +821,52 @@
   };
 
   /* ------------------------------------------------------------------ */
+  /* Filet de sécurité : clic sans effet                                 */
+  /* ------------------------------------------------------------------ */
+
+  // Certaines pages interceptent le clic sur « Valider » et ne soumettent
+  // jamais (ou le navigateur refuse la soumission à cause d'un champ requis
+  // invisible). On surveille le clic : si aucun `submit` n'a suivi, on prend
+  // le relais nous-mêmes après un court délai.
+  const clickGuard = new WeakMap();
+
+  const handleSubmitClick = (event) => {
+    const target = event.target;
+    if (!target || typeof target.closest !== 'function') return;
+    const control = target.closest(
+      'input[type="submit"], button[type="submit"], [data-form="submit-btn"], [data-form="next-btn"][data-submit-show]'
+    );
+    if (!control) return;
+
+    const form = control.form || (typeof control.closest === 'function' ? control.closest('form') : null);
+    if (!form || form.matches(SKIP_SELECTOR) || !isLeadForm(form)) return;
+
+    const token = {};
+    clickGuard.set(form, token);
+
+    window.setTimeout(() => {
+      // Un `submit` a bien eu lieu entre-temps : rien à faire.
+      if (clickGuard.get(form) !== token) return;
+      if (submitting.get(form)) return;
+      clickGuard.delete(form);
+
+      report('clic-sans-soumission', {
+        form: form.id || form.getAttribute('name') || '(sans id)',
+        bouton: (control.value || control.textContent || '').trim().slice(0, 40)
+      });
+
+      // On rejoue le parcours de soumission du moteur.
+      handleSubmit({
+        target: form,
+        preventDefault() {},
+        stopImmediatePropagation() {},
+        stopPropagation() {},
+        __fromClickGuard: true
+      });
+    }, 350);
+  };
+
+  /* ------------------------------------------------------------------ */
   /* Champs cachés de tracking                                           */
   /* ------------------------------------------------------------------ */
 
@@ -783,8 +891,34 @@
   /* ------------------------------------------------------------------ */
 
   const init = () => {
-    document.querySelectorAll('form').forEach((form) => {
-      if (form.matches(SKIP_SELECTOR)) return;
+    // 1. On branche les relais (déjà en place depuis le chargement du script).
+    submitHandler = handleSubmit;
+    clickHandler = handleSubmitClick;
+
+    // 2. Préparation ensuite, formulaire par formulaire, sans risque.
+    let forms = [];
+    try { forms = [...document.querySelectorAll('form')]; } catch (_) { forms = []; }
+    forms.forEach((form) => {
+      try {
+        if (form.matches(SKIP_SELECTOR)) return;
+        prepareForm(form);
+      } catch (error) {
+        // Une page au markup exotique ne doit jamais empêcher le moteur de
+        // fonctionner : on continue avec le formulaire suivant.
+        report('init-form-error', { error: String(error && error.message || error) });
+      }
+    });
+
+    debugLog('moteur de lead prêt', CONFIG);
+    report('moteur-pret', { formulaires: forms.length });
+  };
+
+  const prepareForm = (form) => {
+      // Le navigateur ne doit plus bloquer le clic sur « Valider » à cause
+      // d'un champ `required` invisible (branche conditionnelle, étape masquée) :
+      // c'est le moteur qui valide, et il ne regarde que les champs affichés.
+      try { form.noValidate = true; } catch (_) {}
+
       ensureTrackingFields(form);
 
       const phoneField = form.querySelector('input[name="telephone"], input[name="tel"]');
@@ -810,10 +944,6 @@
       form.addEventListener('ubepro:lead-success', () => {
         form.dispatchEvent(new CustomEvent('ubepro:reset', { bubbles: true }));
       });
-    });
-
-    document.addEventListener('submit', handleSubmit, true);
-    debugLog('moteur de lead prêt', CONFIG);
   };
 
   window.ubeproLead = {
@@ -841,8 +971,37 @@
     }),
     lastResults: null,
     tracking: getTrackingValues,
-    isVisible
+    isVisible,
+    version: '2026-10-23-robuste3',
+    /** Diagnostic : à taper dans la console du navigateur. */
+    diagnose: () => {
+      const forms = [...document.querySelectorAll('form')];
+      return {
+        version: '2026-10-23-robuste3',
+        local: window.__UBEPRO_LOCAL__ === true,
+        formId: DEFAULT_FORM_ID,
+        forms: forms.map((form) => {
+          const fields = [...form.querySelectorAll('input, select, textarea')];
+          return {
+            id: form.id || form.getAttribute('name') || '(sans id)',
+            lead: isLeadForm(form),
+            ignore: form.matches(SKIP_SELECTOR) || form.matches(IGNORE_SELECTOR),
+            noValidate: form.noValidate,
+            champs: fields.length,
+            champsVisibles: fields.filter(isActiveField).length,
+            clientValidity: typeof form.checkValidity === 'function' ? form.checkValidity() : null,
+            champsBloquantsVisibles: fields.filter((f) => isActiveField(f) && !f.checkValidity())
+              .map((f) => f.name || f.id || f.type).slice(0, 8)
+          };
+        })
+      };
+    }
   };
+
+  // Branchement immédiat : l'écoute reste active même si `init` est retardé
+  // ou interrompu par une erreur.
+  submitHandler = handleSubmit;
+  clickHandler = handleSubmitClick;
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init, { once: true });

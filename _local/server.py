@@ -347,6 +347,16 @@ class LocalHandler(SimpleHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "*")
         self.end_headers()
 
+    def end_headers(self):
+        # En local, jamais de cache : une page modifiée doit être visible
+        # immédiatement, sans rechargement forcé.
+        path = urllib.parse.urlsplit(self.path).path.lower()
+        if path.endswith((".html", ".js", ".mjs", ".css", ".json")) or path.endswith("/"):
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Expires", "0")
+        super().end_headers()
+
     # MIME : évite les téléchargements intempestifs
     extensions_map = dict(SimpleHTTPRequestHandler.extensions_map, **{
         ".js": "text/javascript",
