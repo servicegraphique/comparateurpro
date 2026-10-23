@@ -242,12 +242,48 @@
   }
 
   /* --------------------------------------------------------- API locale / log */
+  // Sérialisation défensive : les LP poussent parfois des objets DOM dans le
+  // dataLayer (input avec `inputmask` → structure circulaire). Un
+  // JSON.stringify naïf lève alors un TypeError DANS le script de la page et
+  // casse son propre parcours (constaté sur /automobile/ en Chrome réel).
+  function safeClone(value, seen) {
+    if (value === null || typeof value !== "object") {
+      if (typeof value === "function") return "[function]";
+      if (typeof value === "symbol" || typeof value === "bigint") return String(value);
+      return value;
+    }
+    if (typeof Node !== "undefined" && value instanceof Node) {
+      return "[DOM " + (value.tagName || value.nodeName || "node") + "]";
+    }
+    if (seen.has(value)) return "[circular]";
+    seen.add(value);
+    if (Array.isArray(value) || typeof value.length === "number" && typeof value !== "string") {
+      var list = [];
+      for (var i = 0; i < value.length; i += 1) {
+        try { list.push(safeClone(value[i], seen)); } catch (_) { list.push("[unreadable]"); }
+      }
+      if (!Array.isArray(value) && !list.length) return {};
+      return list;
+    }
+    var out = {};
+    Object.keys(value).forEach(function (key) {
+      try { out[key] = safeClone(value[key], seen); } catch (_) { out[key] = "[unreadable]"; }
+    });
+    return out;
+  }
+
   function postJSON(url, payload) {
     if (!window.fetch) return Promise.reject(new Error("no fetch"));
+    var body;
+    try {
+      body = JSON.stringify(safeClone(payload, new WeakSet()));
+    } catch (_) {
+      body = "{}";
+    }
     return fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: body,
       keepalive: true
     }).then(function (r) {
       if (!r.ok) throw new Error("HTTP " + r.status);

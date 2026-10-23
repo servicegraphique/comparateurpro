@@ -152,15 +152,23 @@ N'importe quel élément portant `id="open-cookie-preferences-btn"`,
 
 ## 7. Robustesse du bouton « Valider »
 
-Le moteur doit fonctionner **même quand la page se défend**. Quatre défenses
-cumulatives :
+Le moteur doit fonctionner **même quand la page se défend**. Les causes de
+blocage ont été reproduites dans un vrai navigateur (Chrome 153, piloté en
+CDP : vraie souris, vrai clavier, vrai layout) — voir
+`RAPPORT-TESTS-VALIDATION.md`. Défenses cumulatives :
 
 | Défense | Ce qu'elle neutralise |
 |---|---|
-| Écoute `submit` + `click` enregistrée **dès l'exécution du script**, avant les scripts de la page | jQuery / Webflow / Formly qui s'intercalent devant nous |
+| Écoute `submit` + `click` sur **`window` en capture** (en plus de `document`) | un script de page qui appelle `stopImmediatePropagation()` en capture avant notre relais |
 | `preventDefault` + `stopImmediatePropagation` **avant toute validation** | handlers maison silencieux (`$('.form-ass').submit(e => e.preventDefault())`) |
 | `form.noValidate = true` sur les formulaires de lead | le navigateur qui refuse le clic (« An invalid form control is not focusable ») à cause d'un `required` invisible |
-| Filet de clic : si aucun `submit` ne suit le clic sous 350 ms, le moteur soumet lui-même | pages qui bloquent le clic, ou navigateur qui n'émet aucun événement |
+| **Réactivation du bouton** (`pointer-events`, `opacity`, classe `disabled`, `disabled`) + classe `.ubp-clickable` en `!important` + `MutationObserver` + rappel toutes les 700 ms | boutons « grisés » par Formly/Webflow qui restent inertes : le clic n'atteint plus le bouton, donc aucun `submit` **et aucun message** |
+| Filet de clic : si aucun `submit` ne suit le clic sous **80 ms**, le moteur soumet lui-même | pages qui annulent l'action par défaut du clic (`e.preventDefault()` sur `click`) |
+| Filet `pointerdown` / `mousedown` (250 ms) | clic consommé par un script de page avant tout événement `click` |
+| Détournement de `HTMLFormElement.prototype.submit()` | pages qui appellent `form.submit()` (aucun événement `submit`, navigation GET, lead perdu) |
+| Message d'erreur **garanti visible** : emplacement de la page, sinon `.ubp-form-error` créé, avec `display:block !important` + champ fautif surligné et nommé (« Merci de compléter le champ « Téléphone » ») | validation silencieuse : bouton muet, aucune explication |
+| `showSuccess` force `display` du bloc de succès (`.w-form-done` est masqué par la feuille Webflow) | formulaire caché + message invisible : l'utilisateur voit un bloc vide |
+| Garde d'étape sur « Suivant » : si l'étape ne bouge pas et qu'aucun message n'apparaît, le moteur explique le champ bloquant | étapes qui ne répondent pas sans rien dire |
 
 Tous les accès `document.cookie` / `sessionStorage` sont encadrés : un
 environnement qui les bloque (iframe sandbox, cookies tiers) ne désactive plus
@@ -170,7 +178,8 @@ le moteur.
 
 En local (`__UBEPRO_LOCAL__`) ou avec `debug: true`, le moteur renvoie chaque
 étape à `/_local/api/log` : `moteur-pret`, `submit-intercepte`,
-`validation-refusee`, `envoi-termine`, `clic-sans-soumission`. Les traces sont
+`validation-refusee`, `envoi-termine`, `clic-sans-soumission`,
+`soumission-programmee`, `etape-bloquee`. Les traces sont
 donc visibles dans le terminal du serveur, sans ouvrir la console.
 
 ```js

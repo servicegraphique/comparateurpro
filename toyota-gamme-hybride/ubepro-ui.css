@@ -279,3 +279,37 @@ body.ubp-cookie-modal-open { overflow: hidden; }
   .ubp-cookie-banner { animation: none; }
   .ubp-cookie-button { transition: none; }
 }
+
+/* --------------------------------------------------- erreurs de formulaire */
+/* Messages du moteur : lisibles même quand la page n'a pas d'emplacement
+   d'erreur prévu. Aucune règle n'écrase le design existant. */
+.ubp-form-error {
+  display: block;
+  margin: 14px 0 0;
+  padding: 12px 14px;
+  border: 1px solid #d93025;
+  border-radius: 8px;
+  background: #fdecea;
+  color: #a50e0e;
+  font: 500 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+.ubp-form-error[hidden] { display: none !important; }
+
+/* Champ qui bloque l'envoi : simple liseré, sans retoucher la palette. */
+.is-invalid,
+[aria-invalid="true"] {
+  outline: 2px solid #d93025 !important;
+  outline-offset: 2px;
+}
+
+/* Neutralise le bridage « grisé » des scripts de page (Formly, Webflow) :
+   ces bibliothèques posent pointer-events:none + opacity sur le bouton
+   d'envoi et ne le réactivent pas toujours (autofill, remplissage
+   programmatique, branche conditionnelle). Le moteur valide lui-même et
+   affiche un message explicite : le clic doit toujours pouvoir l'atteindre. */
+.ubp-clickable {
+  pointer-events: auto !important;
+  opacity: 1 !important;
+  cursor: pointer !important;
+}

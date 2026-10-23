@@ -36,6 +36,18 @@
   let submitHandler = null;
   let clickHandler = null;
 
+  // `window` en phase de capture : ces écouteurs sont appelés AVANT ceux de
+  // `document`, donc avant tout script de page qui enregistrerait un écouteur
+  // de capture plus ancien et appellerait `stopImmediatePropagation()`
+  // (constaté sur plusieurs LP Formly : notre relais `document` ne recevait
+  // ni le clic ni le `submit`).
+  let pointerHandler = null;
+  try {
+    window.addEventListener('submit', (event) => { if (submitHandler) submitHandler(event); }, true);
+    window.addEventListener('click', (event) => { if (clickHandler) clickHandler(event); }, true);
+    window.addEventListener('pointerdown', (event) => { if (pointerHandler) pointerHandler(event); }, true);
+    window.addEventListener('mousedown', (event) => { if (pointerHandler) pointerHandler(event); }, true);
+  } catch (_) { /* environnement sans DOM complet */ }
   try {
     document.addEventListener('submit', (event) => { if (submitHandler) submitHandler(event); }, true);
     document.addEventListener('click', (event) => { if (clickHandler) clickHandler(event); }, true);
@@ -420,33 +432,56 @@
       || (wrapper && wrapper.querySelector('[role="alert"]'));
   };
 
-  const showError = (form, message) => {
-    const slot = findErrorSlot(form);
-    if (slot) {
-      slot.textContent = message;
-      slot.hidden = false;
-      slot.style.removeProperty('display');
+  // Message garanti visible : si la page ne fournit aucun emplacement
+  // d'erreur, on en crée un (classe `.ubp-`, feuille de style séparée).
+  const ensureErrorSlot = (form) => {
+    let slot = findErrorSlot(form);
+    if (!slot) {
+      slot = document.createElement('div');
+      slot.className = 'ubp-form-error';
+      slot.setAttribute('role', 'alert');
+      slot.setAttribute('aria-live', 'assertive');
+      (form.closest('.w-form') || form.parentElement || form).appendChild(slot);
     }
-    form.querySelectorAll('[aria-invalid="true"]').forEach((field) => {
+    return slot;
+  };
+
+  const clearMarks = (form) => {
+    form.querySelectorAll('[aria-invalid="true"], .is-invalid').forEach((field) => {
       field.removeAttribute('aria-invalid');
       field.classList.remove('is-invalid');
     });
-    const invalid = form.querySelector('.is-invalid, [aria-invalid="true"]');
-    (invalid || form).scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+  };
+
+  const showError = (form, message) => {
+    const slot = ensureErrorSlot(form);
+    if (slot) {
+      slot.textContent = message;
+      slot.hidden = false;
+      slot.removeAttribute('hidden');
+      slot.style.removeProperty('display');
+      slot.style.display = 'block';      // certaines feuilles forcent display:none
+      slot.style.setProperty('visibility', 'visible', 'important');
+    }
   };
 
   const clearError = (form) => {
     const slot = findErrorSlot(form);
-    if (slot) { slot.hidden = true; slot.textContent = ''; }
+    if (slot) { slot.hidden = true; slot.textContent = ''; slot.style.removeProperty('display'); }
+    const own = form.parentElement && form.parentElement.querySelector('.ubp-form-error');
+    if (own) { own.hidden = true; own.textContent = ''; own.style.removeProperty('display'); }
   };
 
   const markInvalid = (form, field, message) => {
+    showError(form, message);
     if (field) {
       field.setAttribute('aria-invalid', 'true');
       field.classList.add('is-invalid');
-      try { field.focus({ preventScroll: false }); } catch (_) { field.focus(); }
+      try { field.focus({ preventScroll: false }); } catch (_) { try { field.focus(); } catch (_) {} }
+      field.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+    } else {
+      form.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
     }
-    showError(form, message);
   };
 
   /**
@@ -591,16 +626,28 @@
       } catch (_) { /* URL invalide : on continue */ }
     }
 
+    // `.w-form-done` est masqué par la feuille de style Webflow
+    // (`display:none`) : retirer l'attribut `hidden` ne suffit pas, et
+    // l'utilisateur se retrouve devant un bloc vide — formulaire caché,
+    // message invisible. On force donc l'affichage du message de succès.
+    const reveal = (node) => {
+      if (!node) return;
+      node.hidden = false;
+      node.removeAttribute('hidden');
+      node.style.removeProperty('display');
+      node.style.display = 'block';
+      node.style.setProperty('visibility', 'visible', 'important');
+    };
+
     if (done) {
-      done.hidden = false;
-      done.style.removeProperty('display');
+      reveal(done);
       form.style.display = 'none';
       if (wrapper) wrapper.querySelector(':scope > .w-form-fail')?.setAttribute('hidden', '');
       return;
     }
 
     if (successBox) {
-      successBox.hidden = false;
+      reveal(successBox);
       form.querySelectorAll('.form-step, fieldset[data-step]').forEach((step) => { step.hidden = true; });
       successBox.focus?.();
       return;
@@ -638,7 +685,14 @@
     // (les champs des étapes masquées ou des branches non parcourues sont ignorés)
     const blocking = firstBlockingField(form);
     if (blocking) {
-      markInvalid(form, blocking, 'Merci de compléter ce champ avant de valider.');
+      const others = blockingFields(form).filter((f) => f !== blocking);
+      const names = [blocking, ...others].slice(0, 3).map((f) => `« ${fieldLabel(f)} »`);
+      const suffix = [blocking, ...others].length > 3 ? '…' : '';
+      const liste = names.join(', ') + suffix;
+      const message = others.length
+        ? `Merci de compléter les champs ${liste} avant de valider.`
+        : `Merci de compléter le champ ${liste} avant de valider.`;
+      markInvalid(form, blocking, message);
       return false;
     }
 
@@ -691,6 +745,17 @@
     return pool.find((field) => typeof field.checkValidity === 'function' && !field.checkValidity()) || null;
   };
 
+  /** Tous les champs requis réellement affichés qui bloquent l'envoi. */
+  const blockingFields = (form) => {
+    const candidates = [...form.querySelectorAll('input, select, textarea')]
+      .filter((field) => !field.disabled && field.willValidate !== false);
+    const active = candidates.filter((field) => isActiveField(field));
+    const layoutAvailable = !!(document.body
+      && (document.body.offsetWidth || document.body.offsetHeight || document.body.getClientRects().length));
+    const pool = active.length ? active : (layoutAvailable ? [] : candidates);
+    return pool.filter((field) => typeof field.checkValidity === 'function' && !field.checkValidity());
+  };
+
   /** Vrai si le formulaire contient au moins une valeur soumise exploitable. */
   const hasUsableData = (form) => {
     try {
@@ -723,9 +788,11 @@
 
     if (submitting.get(form)) return;                      // double clic
 
+    const origin = event.__fromClickGuard ? 'filet-clic' : 'evenement-submit';
+    try { window.ubeproLead.lastOrigin = origin; } catch (_) {}
     report('submit-intercepte', {
       form: form.id || form.getAttribute('name') || '(sans id)',
-      origine: event.__fromClickGuard ? 'filet-clic' : 'evenement-submit',
+      origine: origin,
       champs: form.querySelectorAll('input, select, textarea').length
     });
 
@@ -830,6 +897,212 @@
   // le relais nous-mêmes après un court délai.
   const clickGuard = new WeakMap();
 
+  /* ------------------------------------------------------------------ */
+  /* Contrôles bridés par la page                                        */
+  /* ------------------------------------------------------------------ */
+
+  // Cause racine constatée sur les LP (vérifiée dans Chrome réel) :
+  // le script maison (Formly & co) grise le bouton tant que SA validation
+  // n'est pas satisfaite, via `pointer-events:none` + `opacity:.4` + classe
+  // `disabled` — sans jamais poser l'attribut `disabled`. Résultat : le clic
+  // n'atteint plus le bouton, aucun `submit` n'est émis, aucun message n'est
+  // affiché. Le bouton paraît actif (« VALIDER ») et ne fait rien.
+  // Depuis que notre moteur valide lui-même (et affiche un message précis),
+  // le bridage de la page ne doit plus pouvoir bloquer le clic.
+  const SUBMIT_CONTROLS = 'input[type="submit"], button[type="submit"], [data-form="submit-btn"]';
+  const NEXT_CONTROLS = '[data-form="next-btn"]';
+
+  const forceClickable = (control) => {
+    if (!control || !control.style) return false;
+    let changed = false;
+    try {
+      if (control.disabled) { control.disabled = false; changed = true; }
+      const style = control.style;
+      if (style.pointerEvents === 'none') { style.pointerEvents = 'auto'; changed = true; }
+      const opacity = parseFloat(style.opacity);
+      if (!Number.isNaN(opacity) && opacity < 1) { style.opacity = '1'; changed = true; }
+      const computed = window.getComputedStyle ? window.getComputedStyle(control) : null;
+      if (computed && computed.pointerEvents === 'none') {
+        style.setProperty('pointer-events', 'auto', 'important');
+        changed = true;
+      }
+      if (computed && parseFloat(computed.opacity) < 1) {
+        style.setProperty('opacity', '1', 'important');
+        changed = true;
+      }
+      ['disabled', 'is-disabled', 'w-button-disabled', 'btn-disabled'].forEach((cls) => {
+        if (control.classList && control.classList.contains(cls)) {
+          control.classList.remove(cls);
+          changed = true;
+        }
+      });
+      // La page réapplique son état « grisé » en boucle (inline style ET
+      // classe). Une règle `!important` de notre feuille neutralise les deux,
+      // y compris les styles inline non-importants.
+      if (control.classList && !control.classList.contains('ubp-clickable')) {
+        control.classList.add('ubp-clickable');
+        changed = true;
+      }
+    } catch (_) { /* contrôle exotique : on n'insiste pas */ }
+    return changed;
+  };
+
+  // Réactive les contrôles d'envoi/étape d'un formulaire de lead.
+  // On ne touche jamais à l'affichage (display/visibility) : uniquement
+  // l'état « cliquable », qui relève du comportement et non du design.
+  const reviveControls = (form) => {
+    if (!form || !isLeadForm(form)) return;
+    [...form.querySelectorAll(`${SUBMIT_CONTROLS}, ${NEXT_CONTROLS}`)].forEach(forceClickable);
+  };
+
+  // Nom lisible d'un champ, pour des messages explicites.
+  const fieldLabel = (field) => {
+    if (!field) return '';
+    const explicit = field.getAttribute('aria-label') || field.getAttribute('placeholder');
+    if (explicit && explicit.trim()) return explicit.trim();
+    if (field.id) {
+      try {
+        const label = document.querySelector(`label[for="${CSS.escape(field.id)}"]`);
+        if (label && label.textContent.trim()) return label.textContent.trim().slice(0, 60);
+      } catch (_) {}
+    }
+    const parentLabel = field.closest('label');
+    if (parentLabel && parentLabel.textContent.trim()) return parentLabel.textContent.trim().slice(0, 60);
+    const human = {
+      nom: 'Nom', prenom: 'Prénom', mail: 'Email', email: 'Email',
+      telephone: 'Téléphone', tel: 'Téléphone', societe: 'Société',
+      code_postal: 'Code postal', cp: 'Code postal', ville: 'Ville',
+      civilite: 'Civilité', consentement: 'Consentement'
+    }[(field.name || '').toLowerCase()];
+    return human || field.name || 'ce champ';
+  };
+
+  // Message d'erreur visible quelque part dans la page ?
+  const hasVisibleError = (form) => {
+    const wrapper = form.closest('.w-form') || form.parentElement || form;
+    const nodes = [...wrapper.querySelectorAll(
+      '.w-form-fail, .form-error, [role="alert"], [class*="error"], [class*="erreur"], .ubp-form-error'
+    )];
+    return nodes.some((node) => {
+      if (node === form || form.contains(node)) return false;
+      const text = (node.textContent || '').trim();
+      if (!text) return false;
+      const style = window.getComputedStyle(node);
+      return style.display !== 'none' && style.visibility !== 'hidden'
+        && (node.offsetWidth > 0 || node.offsetHeight > 0);
+    });
+  };
+
+  // Signale explicitement le champ qui bloque, au lieu de laisser
+  // l'utilisateur devant un bouton muet.
+  const explainBlocking = (form) => {
+    const blocking = firstBlockingField(form);
+    if (blocking) {
+      markInvalid(form, blocking, `Merci de compléter le champ « ${fieldLabel(blocking)} » avant de valider.`);
+      report('validation-refusee', { form: form.id || '(sans id)', champ: blocking.name || blocking.type, origine: 'clic' });
+      return true;
+    }
+    return false;
+  };
+
+  /* ------------------------------------------------------------------ */
+  /* Étapes : « Suivant » qui ne répond pas                              */
+  /* ------------------------------------------------------------------ */
+
+  // Même combat à l'échelle de l'étape : la page valide en silence et le
+  // bouton « Suivant » ne fait rien. On veille le clic et, si l'étape n'a
+  // pas bougé sans qu'aucun message n'apparaisse, on explique pourquoi.
+  const stepGuard = new WeakMap();
+
+  const handleStepClick = (event) => {
+    const target = event.target;
+    if (!target || typeof target.closest !== 'function') return;
+    const control = target.closest(NEXT_CONTROLS);
+    if (!control) return;
+    const form = control.form || control.closest('form');
+    if (!form || form.matches(SKIP_SELECTOR) || !isLeadForm(form)) return;
+
+    forceClickable(control);
+
+    const token = {};
+    stepGuard.set(form, token);
+    window.setTimeout(() => {
+      if (stepGuard.get(form) !== token) return;
+      if (submitting.get(form)) return;
+      // Étape quittée = le bouton n'est plus rendu : tout va bien.
+      if (!isVisible(control)) return;
+      if (hasVisibleError(form)) return;      // la page a déjà expliqué
+      if (explainBlocking(form)) {
+        report('etape-bloquee', { form: form.id || '(sans id)', cause: 'champ-bloquant' });
+        return;
+      }
+      // Aucun champ requis vide, et pourtant l'étape ne bouge pas : on ne
+      // laisse jamais l'utilisateur devant un bouton muet.
+      showError(form, 'Cette étape n’a pas pu être validée. Vérifiez vos réponses puis réessayez.');
+      report('etape-bloquee', { form: form.id || '(sans id)', cause: 'inconnue' });
+    }, 400);
+  };
+
+  document.addEventListener('click', handleStepClick, true);
+  document.addEventListener('input', (event) => {
+    const form = event.target && event.target.closest ? event.target.closest('form') : null;
+    if (form) reviveControls(form);
+  }, true);
+  document.addEventListener('change', (event) => {
+    const form = event.target && event.target.closest ? event.target.closest('form') : null;
+    if (form) reviveControls(form);
+  }, true);
+
+  // Ceinture et bretelles : certaines pages regrisent le bouton après coup
+  // (MutationObserver, réinitialisation d'étape). On repasse régulièrement.
+  const reviveTimer = window.setInterval(() => {
+    try {
+      [...document.querySelectorAll('form')].forEach((form) => {
+        if (form.matches(SKIP_SELECTOR) || !isLeadForm(form)) return;
+        reviveControls(form);
+      });
+    } catch (_) {}
+  }, 700);
+  try { if (reviveTimer && reviveTimer.unref) reviveTimer.unref(); } catch (_) {}
+
+  /**
+   * Arme le filet de sécurité : si rien ne se passe dans le délai imparti,
+   * le moteur prend le relais. Appelé depuis le clic, mais aussi depuis
+   * `pointerdown` — un script de page peut consommer le clic avant nous.
+   */
+  const armClickGuard = (form, control, event, delay) => {
+    if (!form || !control) return;
+    forceClickable(control);
+    const token = {};
+    clickGuard.set(form, token);
+    window.setTimeout(() => {
+      // Un `submit` a bien eu lieu entre-temps : rien à faire.
+      if (clickGuard.get(form) !== token) return;
+      if (submitting.get(form)) return;
+      clickGuard.delete(form);
+
+      // Le clic n'a produit aucun `submit` : soit un handler de page a
+      // annulé l'action par défaut du clic, soit le bouton est inerte.
+      // On consigne la cause exacte, puis on prend le relais nous-mêmes.
+      let prevented = null;
+      try { prevented = event.defaultPrevented === true; } catch (_) {}
+      report('clic-sans-soumission', {
+        form: form.id || form.getAttribute('name') || '(sans id)',
+        bouton: (control.value || control.textContent || '').trim().slice(0, 40),
+        actionAnnuleeParLaPage: prevented
+      });
+
+      // On rejoue le parcours de soumission du moteur.
+      handleSubmit({
+        target: form,
+        preventDefault() {},
+        stopImmediatePropagation() {},
+        stopPropagation() {},
+        __fromClickGuard: true
+      });
+    }, delay);
+  };
+
   const handleSubmitClick = (event) => {
     const target = event.target;
     if (!target || typeof target.closest !== 'function') return;
@@ -841,29 +1114,62 @@
     const form = control.form || (typeof control.closest === 'function' ? control.closest('form') : null);
     if (!form || form.matches(SKIP_SELECTOR) || !isLeadForm(form)) return;
 
-    const token = {};
-    clickGuard.set(form, token);
+    armClickGuard(form, control, event, 80);
+  };
 
-    window.setTimeout(() => {
-      // Un `submit` a bien eu lieu entre-temps : rien à faire.
-      if (clickGuard.get(form) !== token) return;
-      if (submitting.get(form)) return;
-      clickGuard.delete(form);
+  // Filet « pointerdown » : il se déclenche même si un script de page empêche
+  // notre écouteur de clic de s'exécuter (stopImmediatePropagation).
+  const handlePointerDown = (event) => {
+    const target = event.target;
+    if (!target || typeof target.closest !== 'function') return;
+    const control = target.closest(
+      'input[type="submit"], button[type="submit"], [data-form="submit-btn"], [data-form="next-btn"][data-submit-show]'
+    );
+    if (!control) return;
+    const form = control.form || (typeof control.closest === 'function' ? control.closest('form') : null);
+    if (!form || form.matches(SKIP_SELECTOR) || !isLeadForm(form)) return;
+    armClickGuard(form, control, event, 250);
+  };
 
-      report('clic-sans-soumission', {
-        form: form.id || form.getAttribute('name') || '(sans id)',
-        bouton: (control.value || control.textContent || '').trim().slice(0, 40)
-      });
+  /* ------------------------------------------------------------------ */
+  /* Soumission programmée par la page                                    */
+  /* ------------------------------------------------------------------ */
 
-      // On rejoue le parcours de soumission du moteur.
-      handleSubmit({
-        target: form,
-        preventDefault() {},
-        stopImmediatePropagation() {},
-        stopPropagation() {},
-        __fromClickGuard: true
-      });
-    }, 350);
+  // `HTMLFormElement.prototype.submit()` n'émet AUCUN événement `submit` :
+  // il navigue directement (GET avec les champs dans l'URL). Plusieurs LP
+  // (Formly, scripts maison) l'appellent après le clic sur « Valider » :
+  // le lead partait alors dans une navigation, sans passer par le CRM.
+  // On détourne cet appel vers le moteur, sans jamais toucher aux
+  // formulaires hors périmètre (recherche, intégration dédiée).
+  const patchNativeSubmit = () => {
+    if (window.__UBEPRO_SUBMIT_PATCHED__) return;
+    const proto = window.HTMLFormElement && window.HTMLFormElement.prototype;
+    if (!proto || typeof proto.submit !== 'function') return;
+    const nativeSubmit = proto.submit;
+    proto.submit = function ubeproSubmit(...args) {
+      try {
+        if (this.matches(SKIP_SELECTOR) || this.matches(IGNORE_SELECTOR)) {
+          return nativeSubmit.apply(this, args);
+        }
+        if (!isLeadForm(this) && !hasUsableData(this)) {
+          return nativeSubmit.apply(this, args);
+        }
+        report('soumission-programmee', {
+          form: this.id || this.getAttribute('name') || '(sans id)'
+        });
+        handleSubmit({
+          target: this,
+          preventDefault() {},
+          stopImmediatePropagation() {},
+          stopPropagation() {},
+          __fromProgrammaticSubmit: true
+        });
+        return undefined;
+      } catch (_) {
+        return nativeSubmit.apply(this, args);
+      }
+    };
+    window.__UBEPRO_SUBMIT_PATCHED__ = true;
   };
 
   /* ------------------------------------------------------------------ */
@@ -894,6 +1200,8 @@
     // 1. On branche les relais (déjà en place depuis le chargement du script).
     submitHandler = handleSubmit;
     clickHandler = handleSubmitClick;
+    pointerHandler = handlePointerDown;
+    patchNativeSubmit();
 
     // 2. Préparation ensuite, formulaire par formulaire, sans risque.
     let forms = [];
@@ -921,6 +1229,11 @@
 
       ensureTrackingFields(form);
 
+      // Le bouton de la page est souvent grisé par `pointer-events:none`
+      // (cf. « Contrôles bridés par la page ») : on le rend cliquable
+      // immédiatement, puis à chaque saisie et périodiquement.
+      reviveControls(form);
+
       const phoneField = form.querySelector('input[name="telephone"], input[name="tel"]');
       if (CONFIG.formatPhone && phoneField && !phoneField.dataset.inputmask
           && !/mask/i.test(phoneField.className) && !/_/.test(phoneField.value)) {
@@ -939,6 +1252,23 @@
           if (clean !== event.target.value) event.target.value = clean;
         });
       }
+
+      // Surveillance : la page regrise le bouton juste après nos propres
+      // réactivations (constaté sur /automobile/). On réagit immédiatement
+      // à toute modification de `class`, `style` ou `disabled`.
+      try {
+        if (!form.__ubpObserver && typeof MutationObserver === 'function') {
+          const observer = new MutationObserver(() => {
+            if (form.__ubpReviveScheduled) return;
+            form.__ubpReviveScheduled = true;
+            const flush = () => { form.__ubpReviveScheduled = false; reviveControls(form); };
+            if (window.requestAnimationFrame) window.requestAnimationFrame(flush);
+            else window.setTimeout(flush, 0);
+          });
+          observer.observe(form, { subtree: true, attributes: true, attributeFilter: ['class', 'style', 'disabled'] });
+          form.__ubpObserver = observer;
+        }
+      } catch (_) { /* MutationObserver indisponible */ }
 
       // Remise à zéro après succès (bouton fourni par la page ou généré).
       form.addEventListener('ubepro:lead-success', () => {
@@ -972,12 +1302,12 @@
     lastResults: null,
     tracking: getTrackingValues,
     isVisible,
-    version: '2026-10-23-robuste3',
+    version: '2026-10-23-clic1',
     /** Diagnostic : à taper dans la console du navigateur. */
     diagnose: () => {
       const forms = [...document.querySelectorAll('form')];
       return {
-        version: '2026-10-23-robuste3',
+        version: '2026-10-23-clic1',
         local: window.__UBEPRO_LOCAL__ === true,
         formId: DEFAULT_FORM_ID,
         forms: forms.map((form) => {
@@ -1002,6 +1332,7 @@
   // ou interrompu par une erreur.
   submitHandler = handleSubmit;
   clickHandler = handleSubmitClick;
+  pointerHandler = handlePointerDown;
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init, { once: true });
