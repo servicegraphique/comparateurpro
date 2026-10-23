@@ -48,6 +48,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 LOCAL_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(LOCAL_DIR)
 LEADS_FILE = os.path.join(LOCAL_DIR, "leads", "leads.jsonl")
+SHEETS_FILE = os.path.join(LOCAL_DIR, "leads", "sheets.jsonl")
 EVENTS_FILE = os.path.join(LOCAL_DIR, "logs", "events.jsonl")
 OTP_CODE = "123456"
 OTP_STATE = {}          # telephone -> code envoyé
@@ -219,7 +220,8 @@ class LocalHandler(SimpleHTTPRequestHandler):
 
         if endpoint == "health":
             self._send_json({"ok": True, "sites": len(SITES), "otpCode": OTP_CODE,
-                             "leads": len(read_jsonl(LEADS_FILE, 100000))})
+                             "leads": len(read_jsonl(LEADS_FILE, 100000)),
+                             "sheets": len(read_jsonl(SHEETS_FILE, 100000))})
             return True
 
         if endpoint == "sites":
@@ -262,7 +264,24 @@ class LocalHandler(SimpleHTTPRequestHandler):
             append_jsonl(LEADS_FILE, record)
             print("  ✔ lead capturé  site=%-40s champs=%s"
                   % (record["site"], len(data)), file=sys.stderr)
-            self._send_json({"success": True, "id": record["id"]})
+            self._send_json({"success": True, "status": "ok", "id": record["id"]})
+            return True
+
+        if endpoint.startswith("sheet"):
+            # Remplace Google Apps Script : le standard attend {"status":"ok"}.
+            record = {
+                "id": (data.get("id_lead") if isinstance(data, dict) else None)
+                      or "sheet-%d" % int(time.time() * 1000),
+                "receivedAt": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "site": (data.get("ltm_source") if isinstance(data, dict) else None)
+                        or self._host_label() or "-",
+                "page": data.get("page_url") if isinstance(data, dict) else "",
+                "fields": data,
+            }
+            append_jsonl(SHEETS_FILE, record)
+            print("  ✔ lead (sheet)  site=%-30s champs=%s"
+                  % (record["site"], len(data) if isinstance(data, dict) else 0), file=sys.stderr)
+            self._send_json({"status": "ok", "id": record["id"]})
             return True
 
         if endpoint.startswith("otp"):
@@ -365,6 +384,7 @@ def main():
     args = parser.parse_args()
 
     ensure_file(LEADS_FILE)
+    ensure_file(SHEETS_FILE)
     ensure_file(EVENTS_FILE)
 
     handler = partial(LocalHandler, directory=ROOT)

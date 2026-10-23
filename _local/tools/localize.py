@@ -147,8 +147,10 @@ def resolve_data_attr(attr, url, slug):
     attr = attr.lower()
     if attr == "data-sms-endpoint":
         return "/_local/api/otp"
-    if attr in ("data-google-script-url", "data-api-url", "data-endpoint", "data-lead-endpoint"):
-        return "/_local/api/mock"
+    if attr == "data-google-script-url":
+        return "/_local/api/sheet"
+    if attr in ("data-api-url", "data-endpoint", "data-lead-endpoint"):
+        return "/_local/api/lead"
     if attr == "data-video-urls":
         parts = [p for p in url.split(",") if p]
         out = []
@@ -184,14 +186,18 @@ META_URL_RE = re.compile(r'(<meta[^>]+content=")(https?://[^"]+)(")', re.I)
 
 def transform_html(html, slug, report):
     # --- Google Tag Manager -------------------------------------------------
-    before = len(GTM_COMMENT_RE.findall(html)) + len(GTM_SCRIPT_RE.findall(html))
-    if GTM_SCRIPT_RE.search(html) or GTM_SRC_SCRIPT_RE.search(html):
-        report["gtm"] += 1
-    html = GTM_NOSCRIPT_RE.sub("", html)
-    html = GTM_IFRAME_RE.sub("", html)
-    html = GTM_SRC_SCRIPT_RE.sub("", html)
-    html = GTM_SCRIPT_RE.sub("", html)
-    html = GTM_COMMENT_RE.sub("", html)
+    # Les pages déjà passées par `_standard/tools/apply-standard.py` gèrent GTM
+    # elles-mêmes (chargement conditionné au mode local + Consent Mode v2) :
+    # on ne retire rien sur ces pages.
+    if "ubepro:head" not in html:
+        before = len(GTM_COMMENT_RE.findall(html)) + len(GTM_SCRIPT_RE.findall(html))
+        if GTM_SCRIPT_RE.search(html) or GTM_SRC_SCRIPT_RE.search(html):
+            report["gtm"] += 1
+        html = GTM_NOSCRIPT_RE.sub("", html)
+        html = GTM_IFRAME_RE.sub("", html)
+        html = GTM_SRC_SCRIPT_RE.sub("", html)
+        html = GTM_SCRIPT_RE.sub("", html)
+        html = GTM_COMMENT_RE.sub("", html)
 
     # --- prefetch (aucun intérêt en local) ----------------------------------
     if PREFETCH_RE.search(html):
@@ -200,6 +206,8 @@ def transform_html(html, slug, report):
 
     # --- canonical ----------------------------------------------------------
     def _canonical(m):
+        if "ubepro:head" in html:
+            return m.group(0)          # canonical géré par le standard
         url = m.group(2)
         if not url.lower().startswith(("http://", "https://")):
             return m.group(0)
@@ -210,6 +218,9 @@ def transform_html(html, slug, report):
     # --- attributs href / src / action / data-redirect ----------------------
     def _attr(m):
         attr, url = m.group("attr"), m.group("url")
+        # La balise <noscript> GTM du standard reste intacte (production).
+        if "googletagmanager.com" in url:
+            return m.group(0)
         local = resolve(url)
         if local is None:
             local = fallback(url)

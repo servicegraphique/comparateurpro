@@ -41,6 +41,10 @@ CSS_EXT_RE = re.compile(r"(?:url\(\s*['\"]?|@import\s+['\"])(https?://[^)'\"]+)"
 JS_EXT_RE = re.compile(r"https?://[A-Za-z0-9.-]+")
 ALLOWED = ("www.w3.org", "www.apache.org", "github.com")
 
+# Balises tierces autorisées par le standard (chargées uniquement hors localhost,
+# et seulement après Consent Mode v2 : analytics/marketing restent "denied").
+GTM_ALLOWED = ("googletagmanager.com", "google-analytics.com", "google.com/ads")
+
 # URLs externes neutralisées côté runtime, et leur remplacement
 JS_REPLACEMENTS = {
     "webflow.com/api/v1/form":       "/_local/api/lead",
@@ -50,16 +54,20 @@ JS_REPLACEMENTS = {
     "challenges.cloudflare.com":     "/_local/noop.js  (Turnstile jamais chargé)",
     "use.typekit.net":               "/_local/noop.js  (polices déjà locales)",
     "d3e54v103j8qbb.cloudfront.net": "/_local/noop.svg (badge Webflow retiré)",
-    "googletagmanager.com":          "retiré du HTML (GTM)",
+    "googletagmanager.com":          "autorisé (GTM standard, Consent Mode v2)",
 }
 
 
 def audit():
-    func_hits, css_hits, js_hits = {}, {}, Counter()
+    func_hits, css_hits, js_hits, gtm_hits = {}, {}, Counter(), {}
     for slug in SITES:
         base = os.path.join(ROOT, slug)
         html = open(os.path.join(base, "index.html"), encoding="utf-8").read()
-        bad = [m.group("url") for m in FUNC_RE.finditer(html)]
+        urls = [m.group("url") for m in FUNC_RE.finditer(html)]
+        allowed = [u for u in urls if any(a in u for a in GTM_ALLOWED)]
+        if allowed:
+            gtm_hits[slug] = allowed
+        bad = [u for u in urls if u not in allowed]
         if bad:
             func_hits[slug] = bad
 
@@ -77,7 +85,7 @@ def audit():
                 if any(a in url for a in ALLOWED):
                     continue
                 js_hits[url] += 1
-    return func_hits, css_hits, js_hits
+    return func_hits, css_hits, js_hits, gtm_hits
 
 
 def main():
@@ -85,7 +93,7 @@ def main():
     ap.add_argument("--details", action="store_true")
     args = ap.parse_args()
 
-    func_hits, css_hits, js_hits = audit()
+    func_hits, css_hits, js_hits, gtm_hits = audit()
 
     print("")
     print("  audit des dépendances externes — %d sites" % len(SITES))
@@ -97,6 +105,10 @@ def main():
             print("     ✗ %-45s %s" % (slug, urls[:3]))
     else:
         print("     ✓ aucune (href / src / action / data-* tous locaux)")
+
+    if gtm_hits:
+        print("     ✓ Google Tag Manager : %d page(s) — autorisé (GTM-53SH7D7F,"
+              " Consent Mode v2, chargé hors localhost)" % len(gtm_hits))
 
     print("\n  2. CSS — ressources externes : %d site(s)" % len(css_hits))
     if css_hits:
