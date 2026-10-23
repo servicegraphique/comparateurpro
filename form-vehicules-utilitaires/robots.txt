@@ -1,4 +1,29 @@
+# robots.txt — form-vehicules-utilitaires
+# URL canonique : https://www.comparateurpro.fr/form-vehicules-utilitaires/
+
 User-agent: *
 Allow: /
 
-Sitemap: https://form-vehicules-utilitaires.lp.comparateurpro.fr/sitemap.xml
+# Moteurs IA & agents conversationnels (GEO)
+User-agent: GPTBot
+Allow: /
+
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: Applebot-Extended
+Allow: /
+
+User-agent: CCBot
+Allow: /
+
+Sitemap: https://www.comparateurpro.fr/form-vehicules-utilitaires/sitemap.xml

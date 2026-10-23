@@ -78,9 +78,31 @@ Chargé avant `</body>`, il rétablit les comportements perdus :
 - sert les 131 sites, en mode **chemin** (`/<slug>/`) ou **sous-domaine**
   (`<slug>.localhost`) ;
 - `POST /_local/api/lead` → écrit `_local/leads/leads.jsonl` (1 lead/ligne) ;
+- `POST /_local/api/sheet` → simule Google Apps Script, répond `{"status":"ok"}`
+  et écrit `_local/leads/sheets.jsonl` (le standard envoie **deux fois** : CRM + Sheet) ;
 - `POST /_local/api/otp` → simulateur SMS (état par numéro) ;
 - `POST /_local/api/log` → journal des événements ;
 - `GET /_local/api/leads` + `/_local/leads` → consultation des leads.
+
+### `_standard/` — standard de production (moteur de lead + CMP + SEO)
+
+Depuis la mise au niveau `recrutement_it_tech`, **110 pages** (toutes celles qui
+portent un formulaire) reçoivent une couche applicative autonome, sans toucher
+au design :
+
+| Fichier (copié dans chaque site) | Rôle |
+|---|---|
+| `ubepro-lead.js` | moteur de lead : validation tél/CP, double envoi **CRM + Sheet**, `dataLayer` `formulaire_lead` |
+| `ubepro-consent.js` | CMP RGPD (bannière + modale), cookie 180 j, Consent Mode v2 |
+| `ubepro-ui.css` | styles de la CMP, **préfixés `.ubp-`** (aucun impact sur `style.css`) |
+| `robots.txt`, `sitemap.xml`, `llms.txt` | SEO/GEO par site |
+
+Les pages sans formulaire (mentions légales, politique de confidentialité,
+pages de remerciement) ne sont **pas** modifiées. Voir `_standard/README.md`.
+
+En local, le runtime redirige les deux endpoints de production vers
+`/_local/api/lead` et `/_local/api/sheet` : le parcours complet (validation,
+double envoi, événement GTM) est testable hors ligne.
 
 ### CSP locale sur chaque page
 

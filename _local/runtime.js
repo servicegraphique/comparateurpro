@@ -96,9 +96,8 @@
     // endpoints applicatifs
     if (/hellolead\.pro$/i.test(u.hostname) || u.hostname === "script.google.com") {
       if (/envoi_code_verification/i.test(u.pathname)) return LOCAL_DIR + "api/otp";
-      if (/get_information|webflow/i.test(u.pathname) || u.hostname === "script.google.com") {
-        return LOCAL_DIR + "api/lead";
-      }
+      if (u.hostname === "script.google.com") return LOCAL_DIR + "api/sheet";
+      if (/get_information|webflow/i.test(u.pathname)) return LOCAL_DIR + "api/lead";
     }
     // API de formulaires Webflow -> API locale
     if (/(^|\.)webflow\.com$/i.test(u.hostname) && /\/api\/v1\/form\//i.test(u.pathname)) {
@@ -164,6 +163,11 @@
     var NATIVE_BEACON = navigator.sendBeacon.bind(navigator);
     navigator.sendBeacon = function (url, data) {
       if (isExternal(absolute(url))) {
+        var target = toLocal(url);
+        if (target) {
+          log("beacon externe redirigé →", url, "→", target);
+          return NATIVE_BEACON(target, data);
+        }
         log("beacon externe bloqué →", url);
         return true;
       }
@@ -358,6 +362,9 @@
 
     $(document).on("submit", "form", function (ev) {
       var form = this;
+      // Le moteur de lead standard gère lui-même l'envoi (et ses appels sont
+      // redirigés vers l'API locale par les intercepteurs ci-dessus).
+      if (window.__UBEPRO_LEAD_ACTIVE__) return;
       // Les intégrations Formly sur-mesure envoient déjà vers data-api-endpoint,
       // lui-même redirigé vers l'API locale : on ne double pas l'envoi.
       if (form.hasAttribute("data-api-endpoint")) return;
