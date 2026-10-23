@@ -18,6 +18,7 @@ ajouté (bannière cookies, modale) vit dans `ubepro-ui.css`, préfixé `.ubp-`.
 | `ubepro-ui.css` | Styles de la bannière et de la modale, **uniquement `.ubp-*`**. |
 | `sites.json` | Configuration générée par site : `formId`, domaine, canonical, endpoints. |
 | `tools/apply-standard.py` | Outil d'injection idempotent (marqueurs `<!-- ubepro:head -->` / `<!-- ubepro:body -->`) + génération `robots.txt`, `sitemap.xml`, `llms.txt`. |
+| `tools/verify-standard.py` | Contrôle de non-régression : balises critiques, contenu inchangé hors blocs, fichiers du socle présents. |
 
 ## 2. Ce qui est injecté dans chaque page
 
@@ -66,6 +67,30 @@ python3 _standard/tools/apply-standard.py --apply --only assurance-tns
 L'outil est **idempotent** : il retire d'abord toute injection précédente
 (marqueurs, ancien GTM, ancienne CSP) avant de réécrire. Deux passages
 produisent exactement le même fichier.
+
+### Filet de sécurité (obligatoire)
+
+Chaque page est délimitée par deux marqueurs, début **et** fin :
+
+```html
+<!-- ubepro:head --> … <!-- /ubepro:head -->
+<!-- ubepro:body --> … <!-- /ubepro:body -->
+```
+
+Avant écriture, `assert_no_content_lost()` compare l'empreinte de la page
+d'origine et celle de la page produite, injections retirées. Si une seule
+balise critique (`<title>`, `viewport`, `style.css`, `canonical`, `description`)
+a disparu, ou si le moindre caractère hors blocs diffère, **le fichier n'est pas
+écrit** et la page est signalée en échec.
+
+> Cet incident est arrivé une fois : la première version retirait l'injection
+> précédente en s'arrêtant au premier `</head>`, ce qui supprimait le titre, le
+> viewport et la feuille de style lors d'un second passage. Le contrôle
+> ci-dessous est la garde permanente contre toute récidive.
+
+```bash
+python3 _standard/tools/verify-standard.py     # doit afficher « conforme ✔ »
+```
 
 **Ordre recommandé du pipeline** sur une nouvelle LP :
 

@@ -1,6 +1,6 @@
-# remerciement-ticket-restaurant-v2
+# Ticket Restaurant
 
-> 
+> Ticket Restaurant : comparez les offres des meilleurs partenaires du marché, adaptées à votre activité professionnelle.
 > URL canonique : https://www.comparateurpro.fr/remerciement-ticket-restaurant-v2/
 > Éditeur : Hellodevis SAS (marque Ubepro) — Paris, France.
 

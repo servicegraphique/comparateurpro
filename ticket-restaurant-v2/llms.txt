@@ -1,6 +1,6 @@
-# ticket-restaurant-v2
+# Ticket-restaurant
 
-> 
+> Ticket Restaurant® : la solution qu'il vous faut pour le déjeuner
 > URL canonique : https://www.comparateurpro.fr/ticket-restaurant-v2/
 > Éditeur : Hellodevis SAS (marque Ubepro) — Paris, France.
 

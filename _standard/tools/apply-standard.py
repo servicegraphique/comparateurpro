@@ -39,7 +39,9 @@ ROOT = os.path.dirname(LOCAL_DIR)
 SRC = os.path.join(ROOT, "_standard")
 
 HEAD_MARK = "<!-- ubepro:head -->"
+HEAD_END = "<!-- /ubepro:head -->"
 BODY_MARK = "<!-- ubepro:body -->"
+BODY_END = "<!-- /ubepro:body -->"
 GTM_ID = "GTM-53SH7D7F"
 ORG = {
     "name": "Ubepro",
@@ -257,6 +259,7 @@ def head_block(meta, cfg, html):
         f'<meta http-equiv="Content-Security-Policy" content="{CSP}">',
         jsonld(meta, cfg, html),
         '<link rel="stylesheet" href="ubepro-ui.css">',
+        HEAD_END,
     ])
 
 
@@ -276,6 +279,7 @@ def body_block(cfg):
         GTM_NOSCRIPT,
         '<script src="ubepro-consent.js" defer></script>',
         '<script src="ubepro-lead.js" defer></script>',
+        BODY_END,
     ])
 
 
@@ -283,13 +287,32 @@ def body_block(cfg):
 # Injection
 # --------------------------------------------------------------------------- #
 def strip_previous(html):
-    html = re.sub(r"\n?\s*" + re.escape(HEAD_MARK) + r".*?(?=<script src=\"script\.js|<script src=\"/_local|</head>)",
+    """Retire une injection précédente, sans jamais toucher au contenu de la page.
+
+    Les blocs sont délimités par des marqueurs de début ET de fin. Si le
+    marqueur de fin manque (injection d'une version antérieure), on se rabat
+    sur la dernière balise connue du bloc — jamais au-delà de `</head>`.
+    """
+    # Blocs marqués (forme normale) — on retire aussi l'indentation laissée
+    # par l'insertion, pour que deux passages produisent un fichier identique.
+    html = re.sub(r"\n[ \t]*" + re.escape(HEAD_MARK) + r".*?" + re.escape(HEAD_END) + r"[ \t]*",
                   "", html, flags=re.S)
-    html = re.sub(r"\n?\s*" + re.escape(BODY_MARK) + r".*?(?=<script src=\"script\.js|<script src=\"/_local|</body>)",
+    html = re.sub(r"\n[ \t]*" + re.escape(BODY_MARK) + r".*?" + re.escape(BODY_END) + r"[ \t]*",
                   "", html, flags=re.S)
-    # ancienne CSP posée par _local/tools/localize.py
+
+    # Blocs d'une version antérieure, sans marqueur de fin : on s'arrête sur la
+    # dernière balise injectée, jamais sur `</head>`.
+    html = re.sub(re.escape(HEAD_MARK) + r".*?<link rel=\"stylesheet\" href=\"ubepro-ui\.css\">", "", html, flags=re.S)
+    html = re.sub(re.escape(BODY_MARK) + r".*?<script src=\"ubepro-lead\.js\" defer></script>", "", html, flags=re.S)
+
+    # Résidus éventuels (marqueur seul, orphelin)
+    for marker in (HEAD_MARK, HEAD_END, BODY_MARK, BODY_END):
+        html = html.replace(marker, "")
+
+    # Ancienne CSP posée par _local/tools/localize.py
     html = re.sub(r'\n?\s*<!-- _local:csp -->\s*\n?\s*<meta http-equiv="Content-Security-Policy"[^>]*>', "", html)
-    # GTM historique (le standard le réinjecte, conditionné au mode local)
+
+    # GTM historique de la page (le standard le réinjecte, conditionné au mode local)
     html = re.sub(r"\n?\s*<!--\s*/?\s*(?:End\s+)?Google Tag Manager\s*-->\s*\n?", "\n", html, flags=re.I)
     html = re.sub(r'\s*<script[^>]*>(?:(?!</script>).)*?googletagmanager\.com/gtm\.js(?:(?!</script>).)*?</script>',
                   "", html, flags=re.S)
@@ -300,7 +323,36 @@ def strip_previous(html):
     return html
 
 
+CRITICAL_PATTERNS = (
+    ("<title", "<title"),
+    ("viewport", 'name="viewport"'),
+    ("feuille de style", 'href="style.css"'),
+)
+
+
+class StandardError(RuntimeError):
+    pass
+
+
+def _fingerprint(html):
+    """Empreinte du contenu de la page, injections retirées et blancs normalisés."""
+    stripped = strip_previous(html)
+    stripped = re.sub(r'(<html[^>]*\blang=")[^"]*(")', r"\1fr\2", stripped, count=1, flags=re.I)
+    return re.sub(r"\s+", " ", stripped).strip()
+
+
+def assert_no_content_lost(slug, original, candidate):
+    """Garde-fou : l'injection ne doit retirer AUCUN contenu de la page."""
+    for label, pattern in CRITICAL_PATTERNS:
+        if pattern in original and pattern not in candidate:
+            raise StandardError(f"{slug} : {label} perdue ({pattern})")
+
+    if _fingerprint(original) != _fingerprint(candidate):
+        raise StandardError(f"{slug} : le contenu de la page serait modifié hors blocs standard")
+
+
 def apply_page(slug, html, cfg):
+    original = html
     html = strip_previous(html)
     meta = meta_of(html)
     # Standard : pages françaises déclarées comme telles (aucun impact visuel).
@@ -320,6 +372,7 @@ def apply_page(slug, html, cfg):
     else:
         html += "\n" + body
 
+    assert_no_content_lost(slug, original, html)
     return html, meta
 
 
@@ -445,7 +498,12 @@ def main():
         cfg = build_config(slug)
         index = os.path.join(ROOT, slug, "index.html")
         html = read(index)
-        new_html, meta = apply_page(slug, html, cfg)
+        try:
+            new_html, meta = apply_page(slug, html, cfg)
+        except StandardError as exc:
+            report[slug] = {"formId": cfg["formId"], "error": str(exc), "html_changed": False}
+            print("  ✘ %s" % exc, file=sys.stderr)
+            continue
         report[slug] = {"formId": cfg["formId"], "html_changed": new_html != html}
 
         if apply:
@@ -457,11 +515,14 @@ def main():
             write(os.path.join(ROOT, slug, "llms.txt"), llms_txt(cfg, meta, new_html))
 
     changed = sum(1 for v in report.values() if v["html_changed"])
+    failed = [k for k, v in report.items() if v.get("error")]
     print("")
     print("  standard Ubepro — %s" % ("APPLIQUÉ" if apply else "APERÇU (aucune écriture)"))
     print("  " + "-" * 58)
     print("  Pages avec formulaire     : %d" % len(sites))
     print("  Pages modifiées           : %d" % changed)
+    if failed:
+        print("  Pages EN ÉCHEC (non écrites) : %d" % len(failed))
     for name, label in (
         ("ubepro-lead.js", "moteur de lead"),
         ("ubepro-consent.js", "CMP RGPD"),
